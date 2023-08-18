@@ -1,0 +1,140 @@
+#!/bin/bash
+# details: https://download.seafile.com/published/web-api/home.md
+set -euo pipefail
+LANG=C
+
+# retrieve connection data from environment
+
+# at the end, this script calls itself for restarting -
+# fetch token recevied in last session
+TOKEN="${1:-}"
+
+# helper script: export config value from environment variable or file
+# usage: file_env VAR [DEFAULT_VALUE]
+#    ie: file_env 'XYZ_DB_PASSWORD' 'default_password'
+#    (will allow for "$XYZ_DB_PASSWORD_FILE" to fill in the value of
+#    "$XYZ_DB_PASSWORD" from a file, especially for Docker's secrets feature)
+file_env() {
+    local var="$1"
+    local file_var="${var}_FILE"
+    local default_val="${2:-}"
+    if [ "${!var:-}" ] && [ "${!file_var:-}" ]; then
+        echo "ERROR: both $var and $file_var are set (but are exclusive)!"
+        exit 1
+    else
+        local val="$default_val"
+        if [ "${!var:-}" ]; then
+            val="${!var}"
+        elif [ "${!file_var:-}" ]; then
+            val="$(< "${!file_var}")"
+        fi
+        if [ -z "${val:-}" ]; then
+            echo "ERROR: neither \"$var\" nor \"$file_var\" are specified!"
+            exit 1
+        else
+            export "$var"="$val"
+            unset "$file_var"
+        fi
+    fi
+}
+file_env PASSWORD
+file_env SERVER_URL    # https://seafile.sternmotor.net
+file_env USERNAME   # email address
+echo "$PASSWORD" > $HOME/.pw
+
+# restart seafile daemon every 1800 seconds
+RESTART_DELAY=${RESTART_DELAY:-1800}
+API_URL="$SERVER_URL/api2"
+DATA_DIR="$PWD/$USERNAME"
+
+# check local seafile daemon
+if pgrep seaf-daemon >/dev/null 2>&1
+then
+    echo "* seafile daemon already running ... ok"
+
+else
+    echo -n "* starting seafile sync daemon ... " \
+    && seaf-cli start > /dev/null \
+    && echo "ok" || { EC=$?; echo "ERROR"; exit $EC; }
+fi 
+
+echo -n "* waiting for seafile daemon response ... " \
+&& while ! seaf-cli list >/dev/null 2>&1 ; do \
+    echo -n '.'
+    seaf-cli start
+    sleep 1 
+done \
+&& echo "ok" || { EC=$?; echo "ERROR"; exit $EC; }
+
+# check if server api is alive
+echo -n "* checking API reponse, please re-try multiple times eventually ... " \
+&& curl -sS --connect-timeout 3 $API_URL/ping/ | grep -wq "pong" \
+&& echo "ok" || { EC=$?; echo "ERROR"; exit $EC; }
+
+
+# check if token eventually stored from last session is still valid
+echo -n "* checking if last token is usable, still ... "
+if curl -sSH "Authorization: Token $TOKEN" $API_URL/auth/ping/ | grep -wq "pong"
+then
+    echo "valid, ok"
+    token=$TOKEN
+else
+
+    # retrieve auth token for user:pass 
+    echo -n "no, retrieving new auth token ... " \
+    && token=$(curl -sS --data-urlencode  username="$USERNAME" -d password="$PASSWORD" $API_URL/auth-token/ | jq -r '.token') \
+    && if [ $token == 'null' ]; then
+        echo  "ERROR: bad login, no token"
+        exit 1
+    fi \
+    && echo "ok" || { EC=$?; echo "ERROR, check https://download.seafile.com/published/web-api/home.md"; exit $EC; }
+
+fi
+
+
+# list all server-side libraries
+echo "* Retrieving all server-side non-shared libraries ... "
+curl -sSH "Authorization: Token $token" $API_URL/repos/?type=mine \
+| jq -r '.[] | [.id, .mtime, .size, .name] | @tsv' \
+| awk '{printf "   "$1"\t"strftime("%Y-%m-%d_%H:%M",$2)"\t"int($3/1024/1024+0.5)"MB\t";$1=$2=$3="";print $0 }' \
+| tee $HOME/remote-libs
+
+# list all local libraries, check if remote library is in sync already
+echo "* Retrieving all locally synced libraries ... "
+seaf-cli list > $HOME/local-libs        
+
+echo "* Initiating libraries sync"
+while read r_id r_mtime r_size r_name; do
+
+    echo -n "  - \"$DATA_DIR/$r_name\" ... " 
+    if grep -qw "$r_id" $HOME/local-libs; then
+        echo " already there, ok"
+    else
+       echo -n "initiating ... " \
+       && mkdir -p "$DATA_DIR/$r_name" \
+       && seaf-cli sync \
+           -u "$USERNAME" \
+           -p "$(cat $HOME/.pw)" \
+           -l "$r_id" \
+           -s "$SERVER_URL" \
+           -d "$DATA_DIR/$r_name" \
+           > /dev/null \
+       && echo "ok" || { EC=$?; echo "ERROR"; exit $EC; }
+
+   fi    
+done < $HOME/remote-libs
+    
+
+echo "* Library sync status: "
+seaf-cli status | grep -vE '^[$#]'
+echo "* See you in $(( RESTART_DELAY / 60 )) minutes -----------------------------------"
+
+
+# restart seafile every hour - this is the main loop
+while :; do
+    sleep $RESTART_DELAY
+    seaf-cli stop 
+    # dive into child process, hand over token
+    exec "$0" "$token"
+done
+

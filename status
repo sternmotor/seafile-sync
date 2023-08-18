@@ -1,0 +1,17 @@
+#!/bin/sh -eu
+LANG=C
+SCRIPT_DIR="$(readlink -e "$(dirname "$0")")"
+
+
+docker compose  --project-directory "$SCRIPT_DIR" ps --all --format json \
+| jq -r '.[] | [.ID, .Service] | @tsv' \
+| while read id service; do
+
+    echo 
+    echo "* \"$service\""
+    set +e
+    docker exec -t $id seaf-cli status | grep -vE '^[$#]'
+    set -e
+
+done
+
