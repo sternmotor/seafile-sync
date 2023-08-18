@@ -2,87 +2,30 @@
 version: '3'
 
 services:
-  gunnar: &base
+  user1: &base
     image: sternmotor/seafile-sync:23.03
-    environment: &base_env
-      SERVER_URL: 'https://seafile.sternmotor.net'
-      PASSWORD_FILE: '/var/run/secrets/seafile-gunnar'
-      USERNAME: 'gunnar@manns-online.net'
+    environment: 
+      SERVER_URL: 'https://seafile.example.com'
+      PASSWORD_FILE: '/var/run/secrets/seafile'
+      USERNAME: 'user1@example.com'
       RESTART_DELAY: 1800
     volumes:
     - data:/seafile-data:rw
-    #- $PWD/bin:/usr/local/bin:ro
     secrets:
-    - seafile-gunnar
+    - seafile
     build:
       context: .
       args:
-        CONTAINER_UID: 1001
-        CONTAINER_GID: 1001 
+        CONTAINER_UID: 1000
+        CONTAINER_GID: 1000
     restart: unless-stopped
-    
- 
-  traso:
-    <<: *base
-    environment:
-      <<: *base_env
-      USERNAME: 'g.mann@traso.de'
-      PASSWORD_FILE: '/var/run/secrets/seafile-traso'
-    secrets:
-    - seafile-traso
-
-  mfg:
-    <<: *base
-    environment:
-      <<: *base_env
-      USERNAME: 'mfg@manns-online.net'
-      PASSWORD_FILE: '/var/run/secrets/seafile-gunnar'
-    secrets:
-    - seafile-gunnar
-
-  kathleen:
-    <<: *base
-    environment:
-      <<: *base_env
-      USERNAME: 'kathleen@manns-online.net'
-      PASSWORD_FILE: '/var/run/secrets/seafile-kathleen'
-    secrets:
-    - seafile-kathleen
-
-  seafile:    
-    <<: *base
-    environment:
-      <<: *base_env
-      USERNAME: 'seafile@sternmotor.net'
-      PASSWORD_FILE: '/var/run/secrets/seafile-gunnar'
-    secrets:
-    - seafile-gunnar
-
-  richard:
-    <<: *base
-    environment:
-      <<: *base_env
-      USERNAME: 'richard@manns-online.net'
-      PASSWORD_FILE: '/var/run/secrets/seafile-richard'
-    secrets:
-    - seafile-richard
-
-
-
 
 volumes:
   data:
 
 
 secrets:
-  seafile-gunnar:
-    file: $PWD/secrets/gunnar
-  seafile-traso:
-    file: $PWD/secrets/traso
-  seafile-kathleen:
-    file: $PWD/secrets/kathleen
-  seafile-richard:
-    file: $PWD/secrets/richard
-
+  seafile:
+    file: $PWD/secrets/seafile
 
 # vim:sw=2:ts=2:sts=2:et:
